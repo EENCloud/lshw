@@ -1389,147 +1389,205 @@ vector < string > hwNode::getHints() const
   return result;
 }
 
+/** Generate one kv pair in a JSON object, literally parroting out the value
+ *  without processing.
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the literal string to be parroted as the value of this kv pair.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVLiteral(bool &comma_fl, int level, string key, string value)
+{
+  ostringstream out;
+  if(value != "")
+  {
+    // Output a comma iff there was an element displayed previously at this
+    // level.
+    if(comma_fl)
+      out << "," << endl;
+    out << spaces(2*level);
+    out << "\"" << key << "\" : " << value;
+    comma_fl = true;
+    return out.str();
+  }
+  else
+  {
+    return "";
+  }
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a bool.
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, bool value)
+{
+  return jsonKVLiteral(comma_fl, level, key, value ? "true" : "false");
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a string.
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, string value)
+{
+  return jsonKVLiteral(comma_fl, level, key, "\"" + escapeJSON(value) + "\"");
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a char*
+ *  (which is, apparently, not the same thing as a string in this context :-( ).
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, const char *value)
+{
+  return jsonKVLiteral(comma_fl, level, key, "\"" + escapeJSON(value) + "\"");
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a uint64
+ *  (probably).
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, unsigned long long value)
+{
+  stringstream strs;
+  strs << value;
+  return value ? jsonKVLiteral(comma_fl, level, key, strs.str()) : "";
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a uint32
+ *  (probably).
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, unsigned int value)
+{
+  return jsonKVpair(comma_fl, level, key, (unsigned long long) value);
+}
+
+/** Generate a JSON object snippet for a kv pair where the value is a vector of
+ *  strings.
+ *
+ *  @param comma_fl reference to a state tracker for whether a comma is needed.
+ *  @param level how many levels deep into the JSON hierarchy we are.
+ *  @param key the name of the kv pair to be output.
+ *  @param value the value of the kv pair to be output.
+ *  @return the whole JSON snippet returned as a string.
+ */
+static string jsonKVpair(bool &comma_fl, int level, string key, vector<string> values)
+{
+  ostringstream valstr;
+  valstr << "[ ";
+  for(unsigned int i=0; i<values.size(); i++)
+  {
+    if(i)
+      valstr << ", ";
+    valstr << "\"" << escapeJSON(values[i]) << "\"";
+  }
+  valstr << " ]";
+  return jsonKVLiteral(comma_fl, level, key, valstr.str());
+}
+
+/** Dump the node as a JSON string.  De facto recursive (level increases as
+ *  we descend the hierarchy).  Note that there's a trivial case at level=0
+ *  where we just slap the one entry in an array.  This was originally a port
+ *  from asXML, so it has a few vestiges from that copypasta.
+ *
+ *  @param level the number of levels to indent.
+ */
 string hwNode::asJSON(unsigned level)
 {
   vector < string > config;
   vector < string > resources;
   ostringstream out;
+  bool comma = false;
 
   if(!This) return "";
 
   config = getConfigKeys();
   resources = getResources("\" value=\"");
 
+  // Deal with the trivial case that we're at the top level and fix indents.
   if (level == 0)
   {
     out << "[" << endl;
+    out << asJSON(1) << endl;
+    out << "]";
+    return out.str();
   }
 
+  // Sometimes (like when we do something like -class cpu), not every entry is
+  // displayed.
   if(visible(getClassName()))
   {
+    // Start the JSON (sub) object.
     out << spaces(2*level) << "{" << endl;
-    out << spaces(2*level+2) << "\"id\" : \"" << getId() << "\"," << endl;
-    out << spaces(2*level+2) << "\"class\" : \"" << getClassName() << "\"";
+
+    // Stuff that appears in every object
+    out << jsonKVpair(comma, level+1, "id", getId());
+    out << jsonKVpair(comma, level+1, "class", getClassName());
 
     if (disabled())
-      out << "," << endl << spaces(2*level+2) << "\"disabled\" : true";
+      out << jsonKVpair(comma, level+1, "disabled", true);
     if (claimed())
-      out << "," << endl << spaces(2*level+2) << "\"claimed\" : true";
+      out << jsonKVpair(comma, level+1, "claimed", true);
 
-    if(getHandle() != "")
-      out << "," << endl << spaces(2*level+2) << "\"handle\" : \"" << getHandle() << "\"";
-
-    if (getDescription() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"description\" : \"";
-      out << escapeJSON(getDescription());
-      out << "\"";
-    }
-
-    if (getProduct() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"product\" : \"";
-      out << escapeJSON(getProduct());
-      out << "\"";
-    }
-
-    if (getVendor() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"vendor\" : \"";
-      out << escapeJSON(getVendor());
-      out << "\"";
-    }
-
-    if (getPhysId() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"physid\" : \"";
-      out << getPhysId();
-      out << "\"";
-    }
-
-    if (getBusInfo() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"businfo\" : \"";
-      out << escapeJSON(getBusInfo());
-      out << "\"";
-    }
+    out << jsonKVpair(comma, level+1, "handle", getHandle());
+    out << jsonKVpair(comma, level+1, "description", getDescription());
+    out << jsonKVpair(comma, level+1, "product", getProduct());
+    out << jsonKVpair(comma, level+1, "vendor", getVendor());
+    out << jsonKVpair(comma, level+1, "physid", getPhysId());
+    out << jsonKVpair(comma, level+1, "businfo", getBusInfo());
 
     if (getLogicalName() != "")
     {
       vector<string> logicalnames = getLogicalNames();
 
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"logicalname\" : ";
       if(logicalnames.size() > 1)
       {
-        out << "[";
-        for(unsigned int i = 0; i<logicalnames.size(); i++)
-        {
-          if(i) out << ", ";
-          out << "\"" << logicalnames[i] << "\"";
-        }
-        out << "]";
+        out << jsonKVpair(comma, level+1, "logicalname", logicalnames);
       }
       else
-        out << "\"" << escapeJSON(getLogicalName()) << "\"";
+        out << jsonKVpair(comma, level+1, "logicalname", getLogicalName());
     }
 
-    if (getDev() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"dev\" : \"";
-      out << escapeJSON(getDev());
-      out << "\"";
-    }
+    out << jsonKVpair(comma, level+1, "dev", getDev());
+    out << jsonKVpair(comma, level+1, "version", getVersion());
+    out << jsonKVpair(comma, level+1, "date", getDate());
 
-    if (getVersion() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"version\" : \"";
-      out << escapeJSON(getVersion());
-      out << "\"";
-    }
+    out << jsonKVpair(
+      comma,
+      level+1,
+      "serial",
+      (::enabled("output:sanitize")?REMOVED:getSerial())
+    );
 
-    if (getDate() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"date\" : \"";
-      out << escapeJSON(getDate());
-      out << "\"";
-    }
+    out << jsonKVpair(comma, level+1, "slot", getSlot());
 
-    if (getSerial() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"serial\" : \"";
-      out << (::enabled("output:sanitize")?REMOVED:escapeJSON(getSerial()));
-      out << "\"";
-    }
-
-    if (getSlot() != "")
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"slot\" : \"";
-      out << escapeJSON(getSlot());
-      out << "\"";
-    }
-
+    // Figure out what (if any) units to display for capacity/size.
     if ((getSize() > 0) || (getCapacity() > 0))
       switch (getClass())
       {
@@ -1538,69 +1596,46 @@ string hwNode::asJSON(unsigned level)
         case hw::storage:
         case hw::disk:
         case hw::display:
-          out << "," << endl << spaces(2*level+2) << "\"units\" : \"bytes\"";
+          out << jsonKVpair(comma, level+1, "units", "bytes");
           break;
 
         case hw::processor:
         case hw::bus:
         case hw::system:
-          out << "," << endl << spaces(2*level+2) << "\"units\" : \"Hz\"";
+          out << jsonKVpair(comma, level+1, "units", "Hz");
           break;
 
         case hw::power:
-          out << "," << endl << spaces(2*level+2) << "\"units\" : \"mWh\"";
+          out << jsonKVpair(comma, level+1, "units", "mWh");
           break;
 
         case hw::network:
-          out << "," << endl << spaces(2*level+2) << "\"units\" : \"bit/s\"";
+          out << jsonKVpair(comma, level+1, "units", "bit/s");
           break;
 
         default:
           break;
       }
 
-    if (getSize() > 0)
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"size\" : ";
-      out << getSize();
-    }
-
-    if (getCapacity() > 0)
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"capacity\" : ";
-      out << getCapacity();
-    }
-
-    if (getWidth() > 0)
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"width\" : ";
-      out << getWidth();
-    }
-
-    if (getClock() > 0)
-    {
-      out << "," << endl;
-      out << spaces(2*level+2);
-      out << "\"clock\" : ";
-      out << getClock();
-    }
+    // Note that int values won't appear if they == 0
+    out << jsonKVpair(comma, level+1, "size", getSize());
+    out << jsonKVpair(comma, level+1, "capacity", getCapacity());
+    out << jsonKVpair(comma, level+1, "width", getWidth());
+    out << jsonKVpair(comma, level+1, "clock", getClock());
 
     if (config.size() > 0)
     {
       out << "," << endl;
       out << spaces(2*level+2);
       out << "\"configuration\" : {" << endl;
+      // Dump the config more-or-less directly.  Assumes that all vals are
+      // strings.
       for (unsigned int j = 0; j < config.size(); j++)
       {
         if(j) out << "," << endl;
         out << spaces(2*level+4);
-        out << "\"" << escapeJSON(config[j]) << "\" : \"" << escapeJSON(getConfig(config[j])) << "\"";
+        out << "\"" << escapeJSON(config[j]) << "\" : ";
+        out << "\"" << escapeJSON(getConfig(config[j])) << "\"";
       }
       out << endl << spaces(2*level+2);
       out << "}";
@@ -1613,6 +1648,7 @@ string hwNode::asJSON(unsigned level)
       out << "," << endl;
       out << spaces(2*level+2);
       out << "\"capabilities\" : {" << endl;
+      // Dump capabilities more-or-less directly.  FIXME: Port to jsonKV*?
       for (unsigned int j = 0; j < config.size(); j++)
       {
         if(j) out << "," << endl;
@@ -1629,11 +1665,12 @@ string hwNode::asJSON(unsigned level)
           out << "\"";
         }
       }
-      out << endl << spaces(2*level+2);
-      out << "}";
+      out << endl;
+      out << spaces(2*level+2) << "}";
     }
     config.clear();
 
+    // NB this is disabled and probably vestigial from the asXML copypasta.
     if (0 && resources.size() > 0)
     {
       out << spaces(2*level+1);
@@ -1650,25 +1687,36 @@ string hwNode::asJSON(unsigned level)
     resources.clear();
   }
 
-  for (unsigned int i = 0; i < countChildren(); i++)
+  // Here's where we recurse and descend the tree.  Note that it's possible
+  // (e.g. in the -class cpu case) that we don't display the parent at all and
+  // only display (some of) the kids.
+  if(countChildren()>0)
   {
-    out << getChild(i)->asJSON(visible(getClassName()) ? level + 2 : 1);
-    if (visible(getChild(i)->getClassName()))
+    ostringstream children;
+    for (unsigned int i = 0; i < countChildren(); i++)
     {
-      out << "," << endl;
+      string tmp = getChild(i)->asJSON(visible(getClassName()) ? level + 2 : 1);
+      if(tmp != "") {
+        if(children.str() != "")
+          children << "," << endl;
+        children << tmp;
+      }
+    }
+
+    if(children.str() != "") {
+      if(visible(getClassName()))
+        out << "," << endl << spaces(2*level+2) << "\"children\" : [" << endl;
+      out << children.str();
+      if(visible(getClassName()))
+        out << endl << spaces(2*level+2) << "]";
     }
   }
 
+  // If we displayed non-kids, close up the JSON snippet.
   if(visible(getClassName()))
   {
     out << endl << spaces(2*level);
     out << "}";
-  }
-
-  if (level == 0)
-  {
-    out.seekp(-2, std::ios_base::end);
-    out << endl << "]" << endl;
   }
 
   return out.str();
